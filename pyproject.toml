@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agy-brain-memory"
+version = "1.0.0"
+description = "Antigravity Brain SQLite WAL + FTS5 Cross-Conversation Memory Indexer, Subagent Call-Graph Lineage Tracker, and Session Handoff Digest Exporter."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "orakulzero", email = "129319184+orakulzero@users.noreply.github.com" }
+]
+keywords = [
+    "antigravity",
+    "agy",
+    "sqlite",
+    "fts5",
+    "memory",
+    "subagents",
+    "lineage",
+    "mcp"
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database :: Front-Ends",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+agy-brain-memory = "agy_brain_memory.cli:main"
+agy-brain-memory-mcp = "agy_brain_memory.mcp_server:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agy_brain_memory*"]
