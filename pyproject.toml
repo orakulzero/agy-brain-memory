@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agy-brain-memory"
-version = "1.0.0"
+version = "1.1.0"
 description = "Antigravity Brain SQLite WAL + FTS5 Cross-Conversation Memory Indexer, Subagent Call-Graph Lineage Tracker, and Session Handoff Digest Exporter."
 readme = "README.md"
 requires-python = ">=3.10"

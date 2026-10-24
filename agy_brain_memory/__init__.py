@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 from agy_brain_memory.benchmarks import run_benchmark_suite
 from agy_brain_memory.cli import main, run_cli
@@ -19,6 +19,8 @@ from agy_brain_memory.search import (
     get_subagent_lineage,
     sanitize_fts5_query,
     search_brain,
+    search_capa_records,
+    search_diff_tours,
 )
 
 __all__ = [
@@ -37,5 +39,7 @@ __all__ = [
     "run_stdio_server",
     "sanitize_fts5_query",
     "search_brain",
+    "search_capa_records",
+    "search_diff_tours",
     "validate_brain_memory_plugin",
 ]

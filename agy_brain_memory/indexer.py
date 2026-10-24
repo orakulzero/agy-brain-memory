@@ -115,6 +115,55 @@ class BrainMemoryIndexer:
 
                 CREATE INDEX IF NOT EXISTS idx_edges_child_conv_id
                     ON subagent_edges(child_conv_id);
+
+                CREATE TABLE IF NOT EXISTS diff_tours (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conv_id TEXT NOT NULL,
+                    tour_id TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    step_count INTEGER NOT NULL,
+                    dimensions_json TEXT NOT NULL,
+                    content_json TEXT NOT NULL,
+                    mtime_ns INTEGER NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_diff_tours_conv_id
+                    ON diff_tours(conv_id);
+
+                CREATE VIRTUAL TABLE IF NOT EXISTS diff_tours_fts USING fts5(
+                    conv_id UNINDEXED,
+                    tour_id UNINDEXED,
+                    filename,
+                    title,
+                    description,
+                    content
+                );
+
+                CREATE TABLE IF NOT EXISTS capa_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conv_id TEXT NOT NULL,
+                    record_type TEXT NOT NULL,
+                    record_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    details_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_capa_records_conv_id
+                    ON capa_records(conv_id);
+
+                CREATE INDEX IF NOT EXISTS idx_capa_records_type
+                    ON capa_records(record_type);
+
+                CREATE VIRTUAL TABLE IF NOT EXISTS capa_records_fts USING fts5(
+                    conv_id UNINDEXED,
+                    record_type UNINDEXED,
+                    record_id UNINDEXED,
+                    title,
+                    content
+                );
                 """
             )
 
@@ -127,6 +176,8 @@ class BrainMemoryIndexer:
         steps_indexed = 0
         artifacts_indexed = 0
         edges_indexed = 0
+        diff_tours_indexed = 0
+        capa_records_indexed = 0
 
         if not self.brain_dir.is_dir():
             return {
@@ -136,6 +187,8 @@ class BrainMemoryIndexer:
                 "steps_indexed": 0,
                 "artifacts_indexed": 0,
                 "subagent_edges_indexed": 0,
+                "diff_tours_indexed": 0,
+                "capa_records_indexed": 0,
                 "elapsed_ms": 0.0,
             }
 
@@ -153,6 +206,10 @@ class BrainMemoryIndexer:
             step_fts_rows: list[tuple[Any, ...]] = []
             artifact_rows: list[tuple[Any, ...]] = []
             artifact_fts_rows: list[tuple[Any, ...]] = []
+            diff_tour_rows: list[tuple[Any, ...]] = []
+            diff_tour_fts_rows: list[tuple[Any, ...]] = []
+            capa_record_rows: list[tuple[Any, ...]] = []
+            capa_record_fts_rows: list[tuple[Any, ...]] = []
             edge_rows_to_insert: list[tuple[Any, ...]] = []
             conv_rows: list[tuple[Any, ...]] = []
             convs_to_delete: list[tuple[str]] = []
@@ -170,12 +227,26 @@ class BrainMemoryIndexer:
                 ]
                 transcript_file = next((c for c in candidates if c.is_file()), None)
                 md_files = sorted(p for p in sub.glob("*.md") if p.is_file())
+                tour_files = sorted(
+                    p for p in sub.rglob("*")
+                    if p.is_file() and (p.name.endswith(".tour.json") or p.name.startswith("diff_tour") or ".diff-tour" in p.parts)
+                )
+                capa_files = sorted(
+                    p for p in sub.rglob("*")
+                    if p.is_file() and p.name in (
+                        "evidence_units.jsonl",
+                        "failure_ledger.jsonl",
+                        "audit_chain.json",
+                        "expel_rules.json",
+                        "capa_optoprime_report.json",
+                    )
+                )
 
-                if transcript_file is None and not md_files:
+                if transcript_file is None and not md_files and not tour_files and not capa_files:
                     continue
 
                 total_seen += 1
-                tracked_files = ([transcript_file] if transcript_file else []) + md_files
+                tracked_files = ([transcript_file] if transcript_file else []) + md_files + tour_files + capa_files
                 max_mtime_ns = max(p.stat().st_mtime_ns for p in tracked_files)
                 total_size = sum(p.stat().st_size for p in tracked_files)
 
@@ -307,6 +378,95 @@ class BrainMemoryIndexer:
                     artifact_fts_rows.append((conv_id, md_path.name, md_content))
                     artifacts_indexed += 1
 
+                for tour_path in tour_files:
+                    try:
+                        tour_data = json.loads(tour_path.read_text(encoding="utf-8", errors="replace"))
+                        if isinstance(tour_data, dict):
+                            tour_title = str(tour_data.get("title") or tour_path.stem)
+                            tour_desc = str(tour_data.get("description") or "")
+                            tour_steps = tour_data.get("steps") or []
+                            step_cnt = len(tour_steps) if isinstance(tour_steps, list) else 0
+                            dims: set[str] = set()
+                            text_parts = [tour_title, tour_desc]
+                            if isinstance(tour_steps, list):
+                                for st in tour_steps:
+                                    if isinstance(st, dict):
+                                        d = st.get("dimension") or st.get("review_dimension")
+                                        if d:
+                                            dims.add(str(d))
+                                        f = st.get("file") or st.get("file_path")
+                                        if f:
+                                            text_parts.append(str(f))
+                                        c = st.get("description") or st.get("comment") or st.get("body")
+                                        if c:
+                                            text_parts.append(str(c))
+                            dims_json = json.dumps(sorted(list(dims)))
+                            content_text = " ".join(text_parts)[:MAX_ARTIFACT_CONTENT_CHARS]
+                            t_mtime = tour_path.stat().st_mtime_ns
+                            tour_id = str(tour_data.get("id") or tour_path.stem)
+                            diff_tour_rows.append((conv_id, tour_id, tour_path.name, tour_title, tour_desc, step_cnt, dims_json, json.dumps(tour_data)[:MAX_ARTIFACT_CONTENT_CHARS], t_mtime))
+                            diff_tour_fts_rows.append((conv_id, tour_id, tour_path.name, tour_title, tour_desc, content_text))
+                            diff_tours_indexed += 1
+                    except Exception:
+                        pass
+
+                for c_path in capa_files:
+                    try:
+                        raw_content = c_path.read_text(encoding="utf-8", errors="replace")
+                        if c_path.name == "evidence_units.jsonl":
+                            for line in raw_content.splitlines():
+                                if not line.strip():
+                                    continue
+                                try:
+                                    u = json.loads(line)
+                                    if isinstance(u, dict):
+                                        u_id = str(u.get("unit_id") or u.get("id") or "EV-UNKNOWN")
+                                        u_cmd = str(u.get("command") or "")
+                                        u_title = f"Evidence Unit {u_id}: {u_cmd}"[:200]
+                                        u_dt = str(u.get("created_at") or now_iso)
+                                        capa_record_rows.append((conv_id, "evidence_unit", u_id, u_title, line[:MAX_ARTIFACT_CONTENT_CHARS], u_dt))
+                                        capa_record_fts_rows.append((conv_id, "evidence_unit", u_id, u_title, line[:MAX_ARTIFACT_CONTENT_CHARS]))
+                                        capa_records_indexed += 1
+                                except Exception:
+                                    pass
+                        elif c_path.name == "failure_ledger.jsonl":
+                            for line in raw_content.splitlines():
+                                if not line.strip():
+                                    continue
+                                try:
+                                    f = json.loads(line)
+                                    if isinstance(f, dict):
+                                        f_id = str(f.get("node_id") or f.get("id") or "FAIL-UNKNOWN")
+                                        f_reason = str(f.get("reason") or "")
+                                        f_title = f"Failure: {f_id} - {f_reason}"[:200]
+                                        f_dt = str(f.get("created_at") or now_iso)
+                                        capa_record_rows.append((conv_id, "failure_ledger", f_id, f_title, line[:MAX_ARTIFACT_CONTENT_CHARS], f_dt))
+                                        capa_record_fts_rows.append((conv_id, "failure_ledger", f_id, f_title, line[:MAX_ARTIFACT_CONTENT_CHARS]))
+                                        capa_records_indexed += 1
+                                except Exception:
+                                    pass
+                        elif c_path.name == "audit_chain.json":
+                            try:
+                                ac = json.loads(raw_content)
+                                ac_id = str(ac.get("root_hash") or "audit_chain")
+                                ac_title = "ISO 19011 W3C PROV-DM Audit Chain"
+                                capa_record_rows.append((conv_id, "audit_chain", ac_id, ac_title, raw_content[:MAX_ARTIFACT_CONTENT_CHARS], now_iso))
+                                capa_record_fts_rows.append((conv_id, "audit_chain", ac_id, ac_title, raw_content[:MAX_ARTIFACT_CONTENT_CHARS]))
+                                capa_records_indexed += 1
+                            except Exception:
+                                pass
+                        elif c_path.name in ("expel_rules.json", "capa_optoprime_report.json"):
+                            try:
+                                cr_id = c_path.stem
+                                cr_title = f"CAPA Rules {cr_id}"
+                                capa_record_rows.append((conv_id, "capa_rule", cr_id, cr_title, raw_content[:MAX_ARTIFACT_CONTENT_CHARS], now_iso))
+                                capa_record_fts_rows.append((conv_id, "capa_rule", cr_id, cr_title, raw_content[:MAX_ARTIFACT_CONTENT_CHARS]))
+                                capa_records_indexed += 1
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
                 conv_rows.append(
                     (
                         conv_id,
@@ -335,6 +495,18 @@ class BrainMemoryIndexer:
                 )
                 conn.executemany(
                     "DELETE FROM artifacts_fts WHERE conv_id = ?", convs_to_delete
+                )
+                conn.executemany(
+                    "DELETE FROM diff_tours WHERE conv_id = ?", convs_to_delete
+                )
+                conn.executemany(
+                    "DELETE FROM diff_tours_fts WHERE conv_id = ?", convs_to_delete
+                )
+                conn.executemany(
+                    "DELETE FROM capa_records WHERE conv_id = ?", convs_to_delete
+                )
+                conn.executemany(
+                    "DELETE FROM capa_records_fts WHERE conv_id = ?", convs_to_delete
                 )
                 conn.executemany(
                     "DELETE FROM subagent_edges WHERE parent_conv_id = ?",
@@ -380,6 +552,41 @@ class BrainMemoryIndexer:
                     VALUES (?, ?, ?)
                     """,
                     artifact_fts_rows,
+                )
+            if diff_tour_rows:
+                conn.executemany(
+                    """
+                    INSERT INTO diff_tours (
+                        conv_id, tour_id, filename, title, description,
+                        step_count, dimensions_json, content_json, mtime_ns
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    diff_tour_rows,
+                )
+            if diff_tour_fts_rows:
+                conn.executemany(
+                    """
+                    INSERT INTO diff_tours_fts (conv_id, tour_id, filename, title, description, content)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    diff_tour_fts_rows,
+                )
+            if capa_record_rows:
+                conn.executemany(
+                    """
+                    INSERT INTO capa_records (
+                        conv_id, record_type, record_id, title, details_json, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    capa_record_rows,
+                )
+            if capa_record_fts_rows:
+                conn.executemany(
+                    """
+                    INSERT INTO capa_records_fts (conv_id, record_type, record_id, title, content)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    capa_record_fts_rows,
                 )
             if edge_rows_to_insert:
                 conn.executemany(
@@ -439,5 +646,90 @@ class BrainMemoryIndexer:
             "steps_indexed": steps_indexed,
             "artifacts_indexed": artifacts_indexed,
             "subagent_edges_indexed": edges_indexed,
+            "diff_tours_indexed": diff_tours_indexed,
+            "capa_records_indexed": capa_records_indexed,
             "elapsed_ms": elapsed_ms,
         }
+
+    def index_diff_tour(
+        self,
+        conv_id: str,
+        tour_data: dict[str, Any],
+        filename: str = "tour.json",
+    ) -> int:
+        """Directly insert a structured diff-tour v1 record into the index."""
+        tour_title = str(tour_data.get("title") or Path(filename).stem)
+        tour_desc = str(tour_data.get("description") or "")
+        tour_steps = tour_data.get("steps") or []
+        step_cnt = len(tour_steps) if isinstance(tour_steps, list) else 0
+        dims: set[str] = set()
+        text_parts = [tour_title, tour_desc]
+        if isinstance(tour_steps, list):
+            for st in tour_steps:
+                if isinstance(st, dict):
+                    d = st.get("dimension") or st.get("review_dimension")
+                    if d:
+                        dims.add(str(d))
+                    f = st.get("file") or st.get("file_path")
+                    if f:
+                        text_parts.append(str(f))
+                    c = st.get("description") or st.get("comment") or st.get("body")
+                    if c:
+                        text_parts.append(str(c))
+        dims_json = json.dumps(sorted(list(dims)))
+        content_text = " ".join(text_parts)[:MAX_ARTIFACT_CONTENT_CHARS]
+        now_ns = time.time_ns()
+        tour_id = str(tour_data.get("id") or Path(filename).stem)
+
+        with contextlib.closing(_connect_db(self.db_path)) as conn, conn:
+            cur = conn.execute(
+                """
+                INSERT INTO diff_tours (
+                    conv_id, tour_id, filename, title, description,
+                    step_count, dimensions_json, content_json, mtime_ns
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (conv_id, tour_id, filename, tour_title, tour_desc, step_cnt, dims_json, json.dumps(tour_data)[:MAX_ARTIFACT_CONTENT_CHARS], now_ns),
+            )
+            inserted_id = int(cur.lastrowid or 0)
+            conn.execute(
+                """
+                INSERT INTO diff_tours_fts (conv_id, tour_id, filename, title, description, content)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (conv_id, tour_id, filename, tour_title, tour_desc, content_text),
+            )
+            conn.commit()
+            return inserted_id
+
+    def index_capa_record(
+        self,
+        conv_id: str,
+        record_type: str,
+        record_id: str,
+        title: str,
+        details: dict[str, Any] | str,
+        created_at: str = "",
+    ) -> int:
+        """Directly insert an ISO 19011 / CAPA record into the index."""
+        details_str = json.dumps(details) if isinstance(details, dict) else str(details)
+        dt = created_at or datetime.datetime.now(datetime.timezone.utc).isoformat()
+        with contextlib.closing(_connect_db(self.db_path)) as conn, conn:
+            cur = conn.execute(
+                """
+                INSERT INTO capa_records (
+                    conv_id, record_type, record_id, title, details_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (conv_id, record_type, record_id, title, details_str[:MAX_ARTIFACT_CONTENT_CHARS], dt),
+            )
+            inserted_id = int(cur.lastrowid or 0)
+            conn.execute(
+                """
+                INSERT INTO capa_records_fts (conv_id, record_type, record_id, title, content)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (conv_id, record_type, record_id, title, details_str[:MAX_ARTIFACT_CONTENT_CHARS]),
+            )
+            conn.commit()
+            return inserted_id

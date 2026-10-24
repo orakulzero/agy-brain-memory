@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import re
 import sqlite3
 from pathlib import Path
@@ -23,17 +24,15 @@ def _open_db(db_path: Path | str) -> sqlite3.Connection:
     return conn
 
 
-def search_brain(
+def search_diff_tours(
     db_path: Path | str,
     query: str,
     limit: int = 10,
-    step_type: str | None = None,
-    include_artifacts: bool = True,
+    dimension: str | None = None,
 ) -> dict[str, Any]:
-    """Search indexed brain steps and Markdown artifacts using SQLite FTS5 BM25 ranking."""
+    """Search indexed diff-tour v1 records using SQLite FTS5 BM25 ranking."""
     sanitized = sanitize_fts5_query(query)
-    step_hits: list[dict[str, Any]] = []
-    artifact_hits: list[dict[str, Any]] = []
+    tour_hits: list[dict[str, Any]] = []
 
     db_file = Path(db_path).resolve()
     if not db_file.is_file() or sanitized == '""':
@@ -41,8 +40,150 @@ def search_brain(
             "query": query,
             "sanitized_query": sanitized,
             "results": [],
+        }
+
+    with contextlib.closing(_open_db(db_file)) as conn:
+        rows = conn.execute(
+            """
+            SELECT dt.conv_id, dt.tour_id, dt.filename, dt.title, dt.description,
+                   dt.step_count, dt.dimensions_json, dt.content_json,
+                   snippet(diff_tours_fts, 5, '[', ']', '...', 24) AS snip,
+                   bm25(diff_tours_fts) AS rank_score
+            FROM diff_tours_fts
+            JOIN diff_tours dt ON dt.conv_id = diff_tours_fts.conv_id AND dt.tour_id = diff_tours_fts.tour_id
+            WHERE diff_tours_fts MATCH ?
+            ORDER BY rank_score ASC
+            LIMIT ?
+            """,
+            (sanitized, int(limit) * 3 if dimension else int(limit)),
+        ).fetchall()
+
+        for r in rows:
+            dims = json.loads(str(r["dimensions_json"] or "[]"))
+            if dimension and dimension not in dims:
+                continue
+            cid = str(r["conv_id"])
+            tour_hits.append(
+                {
+                    "conv_id": cid,
+                    "conversation_link": f"conversation://{cid}",
+                    "tour_id": str(r["tour_id"]),
+                    "filename": str(r["filename"]),
+                    "title": str(r["title"]),
+                    "description": str(r["description"]),
+                    "step_count": int(r["step_count"]),
+                    "dimensions": dims,
+                    "snippet": str(r["snip"]),
+                    "score": float(r["rank_score"]),
+                }
+            )
+            if len(tour_hits) >= int(limit):
+                break
+
+    return {
+        "query": query,
+        "sanitized_query": sanitized,
+        "results": tour_hits,
+    }
+
+
+def search_capa_records(
+    db_path: Path | str,
+    query: str,
+    limit: int = 10,
+    record_type: str | None = None,
+) -> dict[str, Any]:
+    """Search indexed ISO 19011 / CAPA records using SQLite FTS5 BM25 ranking."""
+    sanitized = sanitize_fts5_query(query)
+    capa_hits: list[dict[str, Any]] = []
+
+    db_file = Path(db_path).resolve()
+    if not db_file.is_file() or sanitized == '""':
+        return {
+            "query": query,
+            "sanitized_query": sanitized,
+            "results": [],
+        }
+
+    with contextlib.closing(_open_db(db_file)) as conn:
+        if record_type:
+            rows = conn.execute(
+                """
+                SELECT cr.conv_id, cr.record_type, cr.record_id, cr.title, cr.details_json, cr.created_at,
+                       snippet(capa_records_fts, 4, '[', ']', '...', 24) AS snip,
+                       bm25(capa_records_fts) AS rank_score
+                FROM capa_records_fts
+                JOIN capa_records cr ON cr.conv_id = capa_records_fts.conv_id AND cr.record_id = capa_records_fts.record_id
+                WHERE capa_records_fts MATCH ? AND cr.record_type = ?
+                ORDER BY rank_score ASC
+                LIMIT ?
+                """,
+                (sanitized, record_type, int(limit)),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT cr.conv_id, cr.record_type, cr.record_id, cr.title, cr.details_json, cr.created_at,
+                       snippet(capa_records_fts, 4, '[', ']', '...', 24) AS snip,
+                       bm25(capa_records_fts) AS rank_score
+                FROM capa_records_fts
+                JOIN capa_records cr ON cr.conv_id = capa_records_fts.conv_id AND cr.record_id = capa_records_fts.record_id
+                WHERE capa_records_fts MATCH ?
+                ORDER BY rank_score ASC
+                LIMIT ?
+                """,
+                (sanitized, int(limit)),
+            ).fetchall()
+
+        for r in rows:
+            cid = str(r["conv_id"])
+            capa_hits.append(
+                {
+                    "conv_id": cid,
+                    "conversation_link": f"conversation://{cid}",
+                    "record_type": str(r["record_type"]),
+                    "record_id": str(r["record_id"]),
+                    "title": str(r["title"]),
+                    "snippet": str(r["snip"]),
+                    "created_at": str(r["created_at"]),
+                    "score": float(r["rank_score"]),
+                }
+            )
+
+    return {
+        "query": query,
+        "sanitized_query": sanitized,
+        "results": capa_hits,
+    }
+
+
+def search_brain(
+    db_path: Path | str,
+    query: str,
+    limit: int = 10,
+    step_type: str | None = None,
+    include_artifacts: bool = True,
+    include_tours: bool = False,
+    include_capa: bool = False,
+) -> dict[str, Any]:
+    """Search indexed brain steps, Markdown artifacts, diff tours, and CAPA records."""
+    sanitized = sanitize_fts5_query(query)
+    step_hits: list[dict[str, Any]] = []
+    artifact_hits: list[dict[str, Any]] = []
+
+    db_file = Path(db_path).resolve()
+    if not db_file.is_file() or sanitized == '""':
+        out: dict[str, Any] = {
+            "query": query,
+            "sanitized_query": sanitized,
+            "results": [],
             "artifact_results": [],
         }
+        if include_tours:
+            out["diff_tour_results"] = []
+        if include_capa:
+            out["capa_results"] = []
+        return out
 
     with contextlib.closing(_open_db(db_file)) as conn:
         if step_type:
@@ -111,12 +252,22 @@ def search_brain(
                     }
                 )
 
-    return {
+    out = {
         "query": query,
         "sanitized_query": sanitized,
         "results": step_hits,
         "artifact_results": artifact_hits,
     }
+
+    if include_tours:
+        t_res = search_diff_tours(db_path, query, limit=limit)
+        out["diff_tour_results"] = t_res.get("results", [])
+
+    if include_capa:
+        c_res = search_capa_records(db_path, query, limit=limit)
+        out["capa_results"] = c_res.get("results", [])
+
+    return out
 
 
 def _row_to_edge(row: sqlite3.Row) -> dict[str, Any]:
