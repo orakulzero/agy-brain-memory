@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 from agy_brain_memory.benchmarks import run_benchmark_suite
 from agy_brain_memory.cli import main, run_cli
-from agy_brain_memory.compactor import analyze_brain_health, export_session_digest
+from agy_brain_memory.compactor import (
+    analyze_brain_health,
+    create_brain_checkpoint_delta,
+    export_session_digest,
+)
 from agy_brain_memory.indexer import BrainMemoryIndexer
 from agy_brain_memory.mcp_server import handle_mcp_request, run_stdio_server
 from agy_brain_memory.oss_audit import audit_git_repository
@@ -15,6 +19,8 @@ from agy_brain_memory.plugin_installer import (
     validate_brain_memory_plugin,
 )
 from agy_brain_memory.search import (
+    analyze_subagent_graph_topology,
+    export_lineage_mermaid,
     get_conversation_summary,
     get_subagent_lineage,
     sanitize_fts5_query,
@@ -27,7 +33,10 @@ __all__ = [
     "__version__",
     "BrainMemoryIndexer",
     "analyze_brain_health",
+    "analyze_subagent_graph_topology",
     "audit_git_repository",
+    "create_brain_checkpoint_delta",
+    "export_lineage_mermaid",
     "export_session_digest",
     "get_conversation_summary",
     "get_subagent_lineage",

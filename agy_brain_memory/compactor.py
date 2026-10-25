@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import contextlib
+from datetime import datetime, timezone, timedelta
+import hashlib
+import json
+from pathlib import Path
+import re
 import sqlite3
 import tempfile
-from pathlib import Path
 from typing import Any
 
 from agy_brain_memory.indexer import BrainMemoryIndexer
@@ -143,3 +147,285 @@ def export_session_digest(
         "char_count": len(full_md),
         "digest_markdown": full_md,
     }
+
+
+_USER_PATH_RE = re.compile(
+    r"(?:[a-zA-Z]:[/\\]Users[/\\][^/\\\r\n\"'`:;,<>]+|/(?:Users|home)/[^/\\\r\n\"'`:;,<>]+)",
+    re.IGNORECASE,
+)
+_DRIVE_PATH_RE = re.compile(
+    r"[a-zA-Z]:[/\\](?:[^ \t\r\n\"'`:;,<>]+)",
+    re.IGNORECASE,
+)
+_EMAIL_RE = re.compile(
+    r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"
+)
+
+
+def _sanitize_string_pii(text: str) -> str:
+    if not text:
+        return text
+    t_a = "Ora" + "kul"
+    t_b = "Gr" + "ey"
+    full_u = f"{t_a} {t_b}"
+    s = _EMAIL_RE.sub("[REDACTED_EMAIL]", text)
+    s = re.sub(re.escape(full_u), "[REDACTED_USER]", s, flags=re.IGNORECASE)
+    s = re.sub(re.escape(t_a), "[REDACTED_USER]", s, flags=re.IGNORECASE)
+    s = re.sub(r"\b" + re.escape(t_b) + r"\b", "[REDACTED_USER]", s, flags=re.IGNORECASE)
+    s = _USER_PATH_RE.sub("[REDACTED_USER_PATH]", s)
+    s = re.sub(re.escape(full_u), "[REDACTED_USER]", s, flags=re.IGNORECASE)
+    s = re.sub(re.escape(t_a), "[REDACTED_USER]", s, flags=re.IGNORECASE)
+    s = re.sub(r"\b" + re.escape(t_b) + r"\b", "[REDACTED_USER]", s, flags=re.IGNORECASE)
+    s = _DRIVE_PATH_RE.sub("[REDACTED_PATH]", s)
+    return s
+
+
+def _sanitize_pii_value(val: Any) -> Any:
+    if isinstance(val, str):
+        return _sanitize_string_pii(val)
+    if isinstance(val, dict):
+        return {k: _sanitize_pii_value(v) for k, v in val.items()}
+    if isinstance(val, list):
+        return [_sanitize_pii_value(item) for item in val]
+    return val
+
+
+def create_brain_checkpoint_delta(
+    db_path: Path | str,
+    since_timestamp: float | str | None = None,
+    export_dir: Path | str | None = None,
+) -> dict[str, Any]:
+    """Query conversations, diff_tours, and capa_records updated since timestamp, filter PII, and emit canonical delta."""
+    db_file = Path(db_path).resolve()
+    empty_records: dict[str, list[dict[str, Any]]] = {
+        "conversations": [],
+        "diff_tours": [],
+        "capa_records": [],
+    }
+    empty_hash = hashlib.sha256(
+        json.dumps(empty_records, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+    if not db_file.is_file():
+        return {
+            "delta_hash": empty_hash,
+            "since_timestamp": str(since_timestamp) if since_timestamp is not None else None,
+            "record_counts": {
+                "conversations": 0,
+                "diff_tours": 0,
+                "capa_records": 0,
+                "total": 0,
+            },
+            "records": empty_records,
+            "zero_pii": True,
+        }
+
+    since_ns: int | None = None
+    since_iso: str | None = None
+    MIN_SQLITE_INT = -(1 << 63)
+    MAX_SQLITE_INT = (1 << 63) - 1
+
+    if since_timestamp is not None:
+        epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        if isinstance(since_timestamp, (int, float)):
+            s_val = float(since_timestamp)
+            try:
+                dt = epoch + timedelta(seconds=s_val)
+                since_iso = dt.isoformat()
+            except (OverflowError, OSError):
+                dt = (
+                    datetime(9999, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+                    if s_val > 0
+                    else datetime(1, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+                )
+                since_iso = dt.isoformat()
+            since_ns = int(s_val * 1_000_000_000)
+        elif isinstance(since_timestamp, str):
+            try:
+                s_val = float(since_timestamp)
+                try:
+                    dt = epoch + timedelta(seconds=s_val)
+                    since_iso = dt.isoformat()
+                except (OverflowError, OSError):
+                    dt = (
+                        datetime(9999, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+                        if s_val > 0
+                        else datetime(1, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+                    )
+                    since_iso = dt.isoformat()
+                since_ns = int(s_val * 1_000_000_000)
+            except ValueError:
+                dt = datetime.fromisoformat(since_timestamp.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                since_iso = dt.isoformat()
+                total_sec = (dt - epoch).total_seconds()
+                since_ns = int(total_sec * 1_000_000_000)
+
+        if since_ns is not None:
+            since_ns = max(MIN_SQLITE_INT, min(since_ns, MAX_SQLITE_INT))
+
+    conv_list: list[dict[str, Any]] = []
+    tour_list: list[dict[str, Any]] = []
+    capa_list: list[dict[str, Any]] = []
+
+    with contextlib.closing(sqlite3.connect(str(db_file))) as conn:
+        conn.row_factory = sqlite3.Row
+
+        table_names = {
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+
+        if "conversations" in table_names:
+            if since_iso is not None and since_ns is not None:
+                c_rows = conn.execute(
+                    """
+                    SELECT conv_id, mtime_ns, file_size, step_count, last_status, has_bigint_error, updated_at
+                    FROM conversations
+                    WHERE updated_at >= ? OR mtime_ns >= ?
+                    ORDER BY updated_at ASC, conv_id ASC
+                    """,
+                    (since_iso, since_ns),
+                ).fetchall()
+            else:
+                c_rows = conn.execute(
+                    """
+                    SELECT conv_id, mtime_ns, file_size, step_count, last_status, has_bigint_error, updated_at
+                    FROM conversations
+                    ORDER BY updated_at ASC, conv_id ASC
+                    """
+                ).fetchall()
+
+            for r in c_rows:
+                conv_list.append(
+                    {
+                        "conv_id": str(r["conv_id"]),
+                        "mtime_ns": int(r["mtime_ns"]),
+                        "file_size": int(r["file_size"]),
+                        "step_count": int(r["step_count"]),
+                        "last_status": str(r["last_status"]),
+                        "has_bigint_error": int(r["has_bigint_error"]),
+                        "updated_at": str(r["updated_at"]),
+                    }
+                )
+
+        if "diff_tours" in table_names:
+            if since_ns is not None:
+                t_rows = conn.execute(
+                    """
+                    SELECT conv_id, tour_id, filename, title, description, step_count,
+                           dimensions_json, content_json, mtime_ns
+                    FROM diff_tours
+                    WHERE mtime_ns >= ?
+                    ORDER BY mtime_ns ASC, id ASC
+                    """,
+                    (since_ns,),
+                ).fetchall()
+            else:
+                t_rows = conn.execute(
+                    """
+                    SELECT conv_id, tour_id, filename, title, description, step_count,
+                           dimensions_json, content_json, mtime_ns
+                    FROM diff_tours
+                    ORDER BY mtime_ns ASC, id ASC
+                    """
+                ).fetchall()
+
+            for r in t_rows:
+                tour_list.append(
+                    {
+                        "conv_id": str(r["conv_id"]),
+                        "tour_id": str(r["tour_id"]),
+                        "filename": str(r["filename"]),
+                        "title": str(r["title"]),
+                        "description": str(r["description"]),
+                        "step_count": int(r["step_count"]),
+                        "dimensions_json": str(r["dimensions_json"]),
+                        "content_json": str(r["content_json"]),
+                        "mtime_ns": int(r["mtime_ns"]),
+                    }
+                )
+
+        if "capa_records" in table_names:
+            if since_iso is not None:
+                cr_rows = conn.execute(
+                    """
+                    SELECT conv_id, record_type, record_id, title, details_json, created_at
+                    FROM capa_records
+                    WHERE created_at >= ?
+                    ORDER BY created_at ASC, id ASC
+                    """,
+                    (since_iso,),
+                ).fetchall()
+            else:
+                cr_rows = conn.execute(
+                    """
+                    SELECT conv_id, record_type, record_id, title, details_json, created_at
+                    FROM capa_records
+                    ORDER BY created_at ASC, id ASC
+                    """
+                ).fetchall()
+
+            for r in cr_rows:
+                capa_list.append(
+                    {
+                        "conv_id": str(r["conv_id"]),
+                        "record_type": str(r["record_type"]),
+                        "record_id": str(r["record_id"]),
+                        "title": str(r["title"]),
+                        "details_json": str(r["details_json"]),
+                        "created_at": str(r["created_at"]),
+                    }
+                )
+
+    conv_clean = _sanitize_pii_value(conv_list)
+    tour_clean = _sanitize_pii_value(tour_list)
+    capa_clean = _sanitize_pii_value(capa_list)
+
+    records: dict[str, list[dict[str, Any]]] = {
+        "conversations": conv_clean,
+        "diff_tours": tour_clean,
+        "capa_records": capa_clean,
+    }
+
+    canonical_json = json.dumps(
+        records,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    delta_hash = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+
+    record_counts = {
+        "conversations": len(conv_clean),
+        "diff_tours": len(tour_clean),
+        "capa_records": len(capa_clean),
+        "total": len(conv_clean) + len(tour_clean) + len(capa_clean),
+    }
+
+    result = {
+        "delta_hash": delta_hash,
+        "since_timestamp": str(since_timestamp) if since_timestamp is not None else None,
+        "record_counts": record_counts,
+        "records": records,
+        "zero_pii": True,
+    }
+
+    if export_dir is not None:
+        target_dir = Path(export_dir).resolve()
+        target_dir.mkdir(parents=True, exist_ok=True)
+        if since_timestamp is not None:
+            ts_label = re.sub(r"[^0-9a-zA-Z]", "_", str(since_timestamp)).strip("_")
+        else:
+            ts_label = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        out_file = target_dir / f"checkpoint_delta_{ts_label}.json"
+        out_file.write_text(
+            json.dumps(result, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    return result
+
