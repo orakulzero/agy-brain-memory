@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections import Counter
 import contextlib
 import json
+import math
+from pathlib import Path
 import re
 import sqlite3
-from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Sequence, Union
 
 
 def sanitize_fts5_query(raw_query: str) -> str:
@@ -631,4 +633,334 @@ def export_lineage_mermaid(
         )
 
     return "\n".join(lines) + "\n"
+
+
+class HybridBrainRetriever:
+    """Zero-dependency Hybrid Semantic Memory Retriever.
+
+    Combines BM25 lexical token matching and character 3-gram/4-gram TF-IDF
+    vector space cosine similarity using Reciprocal Rank Fusion (RRF, k=60).
+    Recovers relevant documents across exact terms, synonyms, inflections,
+    and developer typos without neural dependencies.
+    """
+
+    def __init__(
+        self,
+        k1: float = 1.5,
+        b: float = 0.75,
+        rrf_k: int = 60,
+        bm25_weight: float = 1.0,
+        semantic_weight: float = 1.0,
+    ) -> None:
+        """Initialize the hybrid retriever parameters."""
+        self.k1 = k1
+        self.b = b
+        self.rrf_k = rrf_k
+        self.bm25_weight = bm25_weight
+        self.semantic_weight = semantic_weight
+
+        # Storage for indexed documents
+        self.documents: List[Dict[str, Any]] = []
+        self.doc_count: int = 0
+        self.avg_doc_len: float = 0.0
+
+        # BM25 index data
+        self.doc_tokens: List[List[str]] = []
+        self.doc_lens: List[int] = []
+        self.token_df: Counter[str] = Counter()
+
+        # Semantic N-Gram index data
+        self.ngram_df: Counter[str] = Counter()
+        self.doc_ngram_vecs: List[Dict[str, float]] = []
+
+    @staticmethod
+    def _tokenize_words(text: str) -> List[str]:
+        """Extract word tokens from text."""
+        return re.findall(r"\w+", text.lower())
+
+    @staticmethod
+    def _extract_char_ngrams(text: str) -> List[str]:
+        """Extract character 3-grams and 4-grams from text."""
+        cleaned = re.sub(r"\s+", " ", text.lower().strip())
+        if not cleaned:
+            return []
+
+        grams: List[str] = []
+        if len(cleaned) >= 3:
+            grams.extend(cleaned[i : i + 3] for i in range(len(cleaned) - 2))
+        if len(cleaned) >= 4:
+            grams.extend(cleaned[i : i + 4] for i in range(len(cleaned) - 3))
+
+        if not grams and cleaned:
+            grams.append(cleaned)
+
+        return grams
+
+    def index_documents(
+        self,
+        documents: Sequence[Union[str, Dict[str, Any]]],
+    ) -> None:
+        """Index a collection of documents for hybrid retrieval."""
+        self.documents = []
+        self.doc_tokens = []
+        self.doc_lens = []
+        self.token_df = Counter()
+        self.ngram_df = Counter()
+        self.doc_ngram_vecs = []
+
+        if not documents:
+            self.doc_count = 0
+            self.avg_doc_len = 0.0
+            return
+
+        for i, item in enumerate(documents):
+            if isinstance(item, dict):
+                doc_id = str(item.get("id", i))
+                content = str(
+                    item.get("content")
+                    or item.get("text")
+                    or item.get("body")
+                    or (item.get("title", "") + " " + item.get("description", "")).strip()
+                    or json.dumps(item)
+                )
+                raw_payload: Any = item
+            else:
+                doc_id = str(i)
+                content = str(item)
+                raw_payload = item
+
+            tokens = self._tokenize_words(content)
+            self.documents.append(
+                {
+                    "id": doc_id,
+                    "content": content,
+                    "raw": raw_payload,
+                }
+            )
+            self.doc_tokens.append(tokens)
+            self.doc_lens.append(len(tokens))
+
+            unique_tokens = set(tokens)
+            for token in unique_tokens:
+                self.token_df[token] += 1
+
+            ngrams = self._extract_char_ngrams(content)
+            unique_ngrams = set(ngrams)
+            for gram in unique_ngrams:
+                self.ngram_df[gram] += 1
+
+        self.doc_count = len(self.documents)
+        self.avg_doc_len = sum(self.doc_lens) / self.doc_count if self.doc_count > 0 else 0.0
+
+        for i in range(self.doc_count):
+            ngrams = self._extract_char_ngrams(self.documents[i]["content"])
+            counts = Counter(ngrams)
+            vec: Dict[str, float] = {}
+            for gram, cnt in counts.items():
+                df = self.ngram_df[gram]
+                idf = math.log((self.doc_count + 1.0) / (df + 1.0)) + 1.0
+                vec[gram] = float(cnt) * idf
+
+            norm = math.sqrt(sum(v * v for v in vec.values()))
+            if norm > 0.0:
+                normalized_vec = {k: v / norm for k, v in vec.items()}
+            else:
+                normalized_vec = {}
+            self.doc_ngram_vecs.append(normalized_vec)
+
+    def _score_bm25(self, query: str) -> List[float]:
+        q_tokens = self._tokenize_words(query)
+        if not q_tokens or self.doc_count == 0 or self.avg_doc_len == 0.0:
+            return [0.0] * self.doc_count
+
+        scores = [0.0] * self.doc_count
+        for token in q_tokens:
+            if token not in self.token_df:
+                continue
+            df = self.token_df[token]
+            idf = math.log(1.0 + (self.doc_count - df + 0.5) / (df + 0.5))
+
+            for i in range(self.doc_count):
+                tf = self.doc_tokens[i].count(token)
+                if tf > 0:
+                    numerator = tf * (self.k1 + 1.0)
+                    denominator = tf + self.k1 * (
+                        1.0 - self.b + self.b * (self.doc_lens[i] / self.avg_doc_len)
+                    )
+                    scores[i] += idf * (numerator / denominator)
+
+        return scores
+
+    def _score_semantic(self, query: str) -> List[float]:
+        q_ngrams = self._extract_char_ngrams(query)
+        if not q_ngrams or self.doc_count == 0:
+            return [0.0] * self.doc_count
+
+        counts = Counter(q_ngrams)
+        q_vec: Dict[str, float] = {}
+        for gram, cnt in counts.items():
+            if gram in self.ngram_df:
+                df = self.ngram_df[gram]
+                idf = math.log((self.doc_count + 1.0) / (df + 1.0)) + 1.0
+                q_vec[gram] = float(cnt) * idf
+
+        norm = math.sqrt(sum(v * v for v in q_vec.values()))
+        if norm == 0.0:
+            return [0.0] * self.doc_count
+
+        normalized_q_vec = {k: v / norm for k, v in q_vec.items()}
+
+        scores = [0.0] * self.doc_count
+        for i in range(self.doc_count):
+            doc_vec = self.doc_ngram_vecs[i]
+            dot = sum(
+                val * doc_vec[gram]
+                for gram, val in normalized_q_vec.items()
+                if gram in doc_vec
+            )
+            scores[i] = max(0.0, dot)
+
+        return scores
+
+    def search(
+        self,
+        query: str,
+        top_k: int = 5,
+    ) -> List[Dict[str, Any]]:
+        if top_k <= 0 or not query.strip() or self.doc_count == 0:
+            return []
+
+        bm25_scores = self._score_bm25(query)
+        semantic_scores = self._score_semantic(query)
+
+        bm25_ranked_indices = [
+            i for i in range(self.doc_count) if bm25_scores[i] > 1e-9
+        ]
+        bm25_ranked_indices.sort(key=lambda idx: bm25_scores[idx], reverse=True)
+        bm25_ranks: Dict[int, int] = {
+            idx: rank + 1 for rank, idx in enumerate(bm25_ranked_indices)
+        }
+
+        semantic_ranked_indices = [
+            i for i in range(self.doc_count) if semantic_scores[i] > 1e-9
+        ]
+        semantic_ranked_indices.sort(key=lambda idx: semantic_scores[idx], reverse=True)
+        semantic_ranks: Dict[int, int] = {
+            idx: rank + 1 for rank, idx in enumerate(semantic_ranked_indices)
+        }
+
+        fused_candidates: set[int] = set(bm25_ranks.keys()).union(semantic_ranks.keys())
+        if not fused_candidates:
+            return []
+
+        scored_results: List[Dict[str, Any]] = []
+        for idx in fused_candidates:
+            rrf_score = 0.0
+            if idx in bm25_ranks:
+                rrf_score += self.bm25_weight / (self.rrf_k + bm25_ranks[idx])
+            if idx in semantic_ranks:
+                rrf_score += self.semantic_weight / (self.rrf_k + semantic_ranks[idx])
+
+            doc = self.documents[idx]
+            scored_results.append(
+                {
+                    "id": doc["id"],
+                    "content": doc["content"],
+                    "score": round(rrf_score, 6),
+                    "bm25_score": round(bm25_scores[idx], 4),
+                    "semantic_score": round(semantic_scores[idx], 4),
+                    "document": doc["raw"],
+                }
+            )
+
+        scored_results.sort(
+            key=lambda r: (r["score"], r["semantic_score"], r["bm25_score"]),
+            reverse=True,
+        )
+
+        return scored_results[:top_k]
+
+
+def hybrid_search_memory(
+    documents_or_db: Union[Sequence[Union[str, Dict[str, Any]]], Path, str],
+    query: str,
+    top_k: int = 5,
+    rrf_k: int = 60,
+    bm25_weight: float = 1.0,
+    semantic_weight: float = 1.0,
+) -> List[Dict[str, Any]]:
+    """Perform hybrid lexical BM25 and semantic character 3/4-gram TF-IDF search with RRF."""
+    docs: List[Union[str, Dict[str, Any]]] = []
+
+    if isinstance(documents_or_db, (str, Path)) and (
+        Path(documents_or_db).is_file() or str(documents_or_db).endswith((".sqlite", ".db"))
+    ):
+        db_path = Path(documents_or_db)
+        if db_path.is_file():
+            with contextlib.closing(sqlite3.connect(str(db_path))) as conn:
+                conn.row_factory = sqlite3.Row
+                tables = {
+                    r[0]
+                    for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    ).fetchall()
+                }
+                if "diff_tours" in tables:
+                    for r in conn.execute(
+                        "SELECT id, conv_id, tour_id, title, description, filename FROM diff_tours"
+                    ):
+                        docs.append(
+                            {
+                                "id": f"diff_tour_{r['id']}",
+                                "title": str(r["title"]),
+                                "content": f"{r['title']} {r['description']} {r['filename']}",
+                                "document": dict(r),
+                            }
+                        )
+                if "capa_records" in tables:
+                    for r in conn.execute(
+                        "SELECT id, conv_id, record_id, title, details_json FROM capa_records"
+                    ):
+                        docs.append(
+                            {
+                                "id": f"capa_{r['id']}",
+                                "title": str(r["title"]),
+                                "content": f"{r['title']} {r['details_json']}",
+                                "document": dict(r),
+                            }
+                        )
+                if "steps" in tables:
+                    for r in conn.execute(
+                        "SELECT id, conv_id, step_index, content, type FROM steps"
+                    ):
+                        docs.append(
+                            {
+                                "id": f"step_{r['id']}",
+                                "content": str(r["content"]),
+                                "document": dict(r),
+                            }
+                        )
+                if "artifacts" in tables:
+                    for r in conn.execute(
+                        "SELECT id, conv_id, filename, content FROM artifacts"
+                    ):
+                        docs.append(
+                            {
+                                "id": f"artifact_{r['id']}",
+                                "title": str(r["filename"]),
+                                "content": f"{r['filename']} {r['content']}",
+                                "document": dict(r),
+                            }
+                        )
+    elif isinstance(documents_or_db, Sequence):
+        docs = list(documents_or_db)
+
+    retriever = HybridBrainRetriever(
+        rrf_k=rrf_k,
+        bm25_weight=bm25_weight,
+        semantic_weight=semantic_weight,
+    )
+    retriever.index_documents(docs)
+    return retriever.search(query, top_k=top_k)
+
 

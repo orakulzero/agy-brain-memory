@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 import sqlite3
 import tempfile
-from typing import Any
+from typing import Any, Dict, List, Sequence, Tuple
 
 from agy_brain_memory.indexer import BrainMemoryIndexer
 from agy_brain_memory.search import get_conversation_summary
@@ -428,4 +428,78 @@ def create_brain_checkpoint_delta(
         )
 
     return result
+
+
+def compute_simhash64(text: str) -> int:
+    """Compute a 64-bit Charikar SimHash fingerprint over subword character N-grams."""
+    cleaned = re.sub(r"\s+", " ", text.lower().strip())
+    if not cleaned:
+        return 0
+
+    tokens: List[str] = []
+    for n in (3, 4):
+        if len(cleaned) >= n:
+            tokens.extend(cleaned[i : i + n] for i in range(len(cleaned) - n + 1))
+    if not tokens:
+        tokens = [cleaned]
+
+    v = [0] * 64
+    for tok in tokens:
+        h = int.from_bytes(hashlib.md5(tok.encode("utf-8")).digest()[:8], "big")
+        for i in range(64):
+            if (h >> i) & 1:
+                v[i] += 1
+            else:
+                v[i] -= 1
+
+    fp = 0
+    for i in range(64):
+        if v[i] > 0:
+            fp |= 1 << i
+    return fp
+
+
+def deduplicate_near_identical_steps(
+    steps: Sequence[Dict[str, Any]],
+    max_hamming_distance: int = 3,
+    content_key: str = "content",
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Filter out near-duplicate steps whose 64-bit SimHash Hamming distance <= max_hamming_distance.
+
+    Returns (deduplicated_steps, telemetry_dict).
+    """
+    if not steps:
+        return [], {
+            "original_count": 0,
+            "deduplicated_count": 0,
+            "removed_count": 0,
+            "max_hamming_distance": max_hamming_distance,
+        }
+
+    deduped: List[Dict[str, Any]] = []
+    last_hash: int | None = None
+
+    for step in steps:
+        if not isinstance(step, dict):
+            deduped.append(step)
+            continue
+
+        content = str(step.get(content_key, ""))
+        h = compute_simhash64(content)
+        if last_hash is not None:
+            dist = bin(h ^ last_hash).count("1")
+            if dist <= max_hamming_distance:
+                continue
+
+        deduped.append(step)
+        last_hash = h
+
+    telemetry = {
+        "original_count": len(steps),
+        "deduplicated_count": len(deduped),
+        "removed_count": len(steps) - len(deduped),
+        "max_hamming_distance": max_hamming_distance,
+    }
+    return deduped, telemetry
+
 
