@@ -503,3 +503,96 @@ def deduplicate_near_identical_steps(
     return deduped, telemetry
 
 
+def allocate_context_budget(
+    items: Sequence[Dict[str, Any]],
+    max_token_budget: int,
+    utility_key: str = "utility",
+    token_cost_key: str = "token_cost",
+    mandatory_key: str = "mandatory",
+    greedy_approximation: bool = False,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Solve 0/1 knapsack context budget optimization maximizing utility (REQ-BM-202).
+
+    Preserves mandatory items unconditionally, then solves 0/1 knapsack on remaining budget.
+    """
+    if not items:
+        return [], {
+            "allocated_tokens": 0,
+            "total_utility": 0,
+            "budget_limit": max_token_budget,
+            "utilization_pct": 0.0,
+            "selected_count": 0,
+            "rejected_count": 0,
+            "algorithm": "greedy_density" if greedy_approximation else "optimal_dp",
+        }
+
+    mandatory_items: List[Dict[str, Any]] = []
+    optional_items: List[Dict[str, Any]] = []
+
+    for it in items:
+        if bool(it.get(mandatory_key, False)):
+            mandatory_items.append(it)
+        else:
+            optional_items.append(it)
+
+    mand_cost = sum(int(m.get(token_cost_key, 0)) for m in mandatory_items)
+    mand_util = sum(int(m.get(utility_key, 0)) for m in mandatory_items)
+
+    remaining_budget = max(0, max_token_budget - mand_cost)
+    selected_optional: List[Dict[str, Any]] = []
+
+    if greedy_approximation:
+        algorithm = "greedy_density"
+        def _density(x: Dict[str, Any]) -> float:
+            c = max(1, int(x.get(token_cost_key, 1)))
+            u = float(x.get(utility_key, 0))
+            return u / c
+
+        sorted_optional = sorted(optional_items, key=_density, reverse=True)
+        curr_b = remaining_budget
+        for it in sorted_optional:
+            c = int(it.get(token_cost_key, 0))
+            if c <= curr_b and curr_b > 0:
+                selected_optional.append(it)
+                curr_b -= c
+    else:
+        algorithm = "optimal_dp"
+        n = len(optional_items)
+        W = remaining_budget
+        if n > 0 and W > 0:
+            dp = [[0] * (W + 1) for _ in range(n + 1)]
+            for i in range(1, n + 1):
+                it = optional_items[i - 1]
+                cost = int(it.get(token_cost_key, 0))
+                val = int(it.get(utility_key, 0))
+                for w in range(W + 1):
+                    if cost <= w:
+                        dp[i][w] = max(dp[i - 1][w], dp[i - 1][w - cost] + val)
+                    else:
+                        dp[i][w] = dp[i - 1][w]
+
+            w = W
+            for i in range(n, 0, -1):
+                if dp[i][w] != dp[i - 1][w]:
+                    it = optional_items[i - 1]
+                    selected_optional.append(it)
+                    w -= int(it.get(token_cost_key, 0))
+            selected_optional.reverse()
+
+    selected = mandatory_items + selected_optional
+    allocated_tokens = sum(int(x.get(token_cost_key, 0)) for x in selected)
+    total_utility = sum(int(x.get(utility_key, 0)) for x in selected)
+    rejected_count = len(items) - len(selected)
+
+    telemetry = {
+        "allocated_tokens": allocated_tokens,
+        "total_utility": total_utility,
+        "budget_limit": max_token_budget,
+        "utilization_pct": round(allocated_tokens / max(1, max_token_budget) * 100.0, 2),
+        "selected_count": len(selected),
+        "rejected_count": rejected_count,
+        "algorithm": algorithm,
+    }
+    return selected, telemetry
+
+

@@ -53,7 +53,7 @@ def install_brain_memory_plugin(plugins_root: Path | str) -> dict[str, Any]:
         "name": "agy-brain-memory",
         "displayName": "Antigravity Brain Memory & Subagent Lineage Engine",
         "description": "Incremental SQLite WAL + FTS5 full-text memory engine, subagent call-graph lineage tracker, brain health analyzer, and compact session handoff exporter.",
-        "version": "1.3.0",
+        "version": "2.0.0",
         "logo": "assets/logo.svg",
         "suggestedPrompts": [
             "Search my past Antigravity conversations for FTS5 or HookMultiplexer",
