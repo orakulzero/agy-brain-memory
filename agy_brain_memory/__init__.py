@@ -4,8 +4,6 @@ from __future__ import annotations
 
 __version__ = "2.0.0"
 
-from agy_brain_memory.benchmarks import run_benchmark_suite
-from agy_brain_memory.cli import main, run_cli
 from agy_brain_memory.compactor import (
     allocate_context_budget,
     analyze_brain_health,
@@ -19,7 +17,6 @@ from agy_brain_memory.knowledge_graph import (
     extract_temporal_knowledge_graph,
 )
 from agy_brain_memory.indexer import BrainMemoryIndexer
-from agy_brain_memory.mcp_server import handle_mcp_request, run_stdio_server
 from agy_brain_memory.oss_audit import audit_git_repository
 from agy_brain_memory.plugin_installer import (
     install_brain_memory_plugin,
@@ -68,3 +65,21 @@ __all__ = [
     "search_diff_tours",
     "validate_brain_memory_plugin",
 ]
+
+
+def __getattr__(name: str):
+    if name == 'run_benchmark_suite':
+                return run_benchmark_suite
+    if name == 'main':
+        from agy_brain_memory.cli import main
+        return main
+    if name == 'run_cli':
+        from agy_brain_memory.cli import run_cli
+        return run_cli
+    if name == 'handle_mcp_request':
+        from agy_brain_memory.mcp_server import handle_mcp_request
+        return handle_mcp_request
+    if name == 'run_stdio_server':
+        from agy_brain_memory.mcp_server import run_stdio_server
+        return run_stdio_server
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
