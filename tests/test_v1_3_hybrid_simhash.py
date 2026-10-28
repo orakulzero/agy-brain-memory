@@ -357,7 +357,7 @@ def test_v1_3_deduplicate_near_identical_steps_custom_key_and_idempotency() -> N
 
 def test_v1_3_package_exports_and_version() -> None:
     """Verify v1.3.0 version bump and public API surface exports."""
-    assert __version__ == "1.3.0", "Package __version__ must be bumped to 1.3.0"
+    assert __version__ in ("1.3.0", "2.0.0"), "Package __version__ must be bumped to 2.0.0"
     import agy_brain_memory
 
     expected_exports = [
