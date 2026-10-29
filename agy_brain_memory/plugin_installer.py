@@ -66,12 +66,15 @@ def install_brain_memory_plugin(plugins_root: Path | str) -> dict[str, Any]:
     )
 
     logo_svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">\n'
-        '  <rect width="128" height="128" rx="24" fill="#0f172a"/>\n'
-        '  <circle cx="44" cy="48" r="12" fill="#38bdf8"/>\n'
-        '  <circle cx="84" cy="48" r="12" fill="#818cf8"/>\n'
-        '  <circle cx="64" cy="88" r="12" fill="#34d399"/>\n'
-        '  <path d="M44 48 L84 48 L64 88 Z" stroke="#94a3b8" stroke-width="4" fill="none"/>\n'
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" fill="none">\n'
+        '  <rect x="6" y="6" width="116" height="116" rx="26" fill="#0B1120" stroke="#A855F7" stroke-width="2.8"/>\n'
+        '  <rect x="12" y="12" width="104" height="104" rx="20" fill="#0F172A" stroke="#38BDF8" stroke-opacity="0.28" stroke-width="1.2"/>\n'
+        '  <rect x="18" y="16" width="38" height="15" rx="4.5" fill="#1E293B" stroke="#A855F7" stroke-width="1.5"/>\n'
+        '  <text x="37" y="26.5" text-anchor="middle" fill="#A855F7" font-family="monospace" font-size="8.5" font-weight="bold">P20</text>\n'
+        '  <circle cx="104" cy="23.5" r="3.8" fill="#38BDF8"/>\n'
+        '  <ellipse cx="64" cy="95" rx="28" ry="7" fill="#A855F7" fill-opacity="0.22" stroke="#A855F7" stroke-width="2.2"/>\n'
+        '  <path d="M44 75 C34 67 34 49 48 43 C52 35 64 37 64 45 C64 37 76 35 80 43 C94 49 94 67 84 75 C78 81 50 81 44 75 Z" fill="#A855F7" fill-opacity="0.2" stroke="#A855F7" stroke-width="2.5"/>\n'
+        '  <path d="M64 45 V82 M50 56 L64 66 L78 56 M48 70 L64 66 L80 70" stroke="#38BDF8" stroke-width="2.2" stroke-linecap="round"/>\n'
         "</svg>\n"
     )
     (plugin_dir / "assets" / "logo.svg").write_text(logo_svg, encoding="utf-8")
