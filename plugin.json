@@ -1,0 +1,12 @@
+{
+  "name": "agy-brain-memory",
+  "displayName": "Antigravity Brain Memory & Subagent Lineage Engine",
+  "description": "Incremental SQLite WAL + FTS5 full-text memory engine, subagent call-graph lineage tracker, brain health analyzer, and compact session handoff exporter.",
+  "version": "2.0.0",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "Search my past Antigravity conversations for FTS5 or HookMultiplexer",
+    "Trace the subagent lineage and outcomes for the current conversation",
+    "Generate a compact session handoff digest under 2000 characters"
+  ]
+}

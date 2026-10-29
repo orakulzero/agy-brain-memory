@@ -238,7 +238,7 @@ def validate_brain_memory_plugin(plugin_dir: Path | str) -> dict[str, Any]:
                     errors.append("plugin.json suggestedPrompts must contain at most 3 prompts")
                 logo = str(manifest.get("logo", ""))
                 rel_logo = logo[2:] if logo.startswith("./") else logo
-                if not rel_logo or Path(rel_logo).is_absolute():
+                if not rel_logo or rel_logo.startswith(("/", "\\")) or Path(rel_logo).is_absolute():
                     errors.append("plugin.json logo must be a relative path")
                 elif not (pdir / rel_logo).is_file():
                     errors.append(f"plugin.json logo file does not exist: {logo}")
