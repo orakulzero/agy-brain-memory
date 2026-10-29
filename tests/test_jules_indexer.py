@@ -5,7 +5,7 @@ from pathlib import Path
 # Since agy_brain_memory/indexer.py is truncated and invalid Python syntax,
 # we need to extract _unquote_arg directly for testing.
 def _extract_and_exec_unquote_arg():
-    indexer_path = Path("agy_brain_memory/indexer.py")
+    indexer_path = Path(__file__).resolve().parent.parent / "agy_brain_memory" / "indexer.py"
     content = indexer_path.read_text()
     
     # Extract just the _unquote_arg function definition
@@ -56,7 +56,7 @@ def test_unquote_arg_edge_cases():
 
 # Optionally we can extract _connect_db to do some invariant checks
 def _extract_and_exec_connect_db():
-    indexer_path = Path("agy_brain_memory/indexer.py")
+    indexer_path = Path(__file__).resolve().parent.parent / "agy_brain_memory" / "indexer.py"
     content = indexer_path.read_text()
     
     # Extract just the _connect_db function definition
