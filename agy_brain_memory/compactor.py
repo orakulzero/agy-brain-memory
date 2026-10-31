@@ -10,7 +10,8 @@ from pathlib import Path
 import re
 import sqlite3
 import tempfile
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any
+from collections.abc import Sequence
 
 from agy_brain_memory.indexer import BrainMemoryIndexer
 from agy_brain_memory.search import get_conversation_summary
@@ -176,8 +177,7 @@ def _sanitize_string_pii(text: str) -> str:
     s = re.sub(re.escape(full_u), "[REDACTED_USER]", s, flags=re.IGNORECASE)
     s = re.sub(re.escape(t_a), "[REDACTED_USER]", s, flags=re.IGNORECASE)
     s = re.sub(r"\b" + re.escape(t_b) + r"\b", "[REDACTED_USER]", s, flags=re.IGNORECASE)
-    s = _DRIVE_PATH_RE.sub("[REDACTED_PATH]", s)
-    return s
+    return _DRIVE_PATH_RE.sub("[REDACTED_PATH]", s)
 
 
 def _sanitize_pii_value(val: Any) -> Any:
@@ -436,7 +436,7 @@ def compute_simhash64(text: str) -> int:
     if not cleaned:
         return 0
 
-    tokens: List[str] = []
+    tokens: list[str] = []
     for n in (3, 4):
         if len(cleaned) >= n:
             tokens.extend(cleaned[i : i + n] for i in range(len(cleaned) - n + 1))
@@ -460,10 +460,10 @@ def compute_simhash64(text: str) -> int:
 
 
 def deduplicate_near_identical_steps(
-    steps: Sequence[Dict[str, Any]],
+    steps: Sequence[dict[str, Any]],
     max_hamming_distance: int = 3,
     content_key: str = "content",
-) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Filter out near-duplicate steps whose 64-bit SimHash Hamming distance <= max_hamming_distance.
 
     Returns (deduplicated_steps, telemetry_dict).
@@ -476,7 +476,7 @@ def deduplicate_near_identical_steps(
             "max_hamming_distance": max_hamming_distance,
         }
 
-    deduped: List[Dict[str, Any]] = []
+    deduped: list[dict[str, Any]] = []
     last_hash: int | None = None
 
     for step in steps:
@@ -504,13 +504,13 @@ def deduplicate_near_identical_steps(
 
 
 def allocate_context_budget(
-    items: Sequence[Dict[str, Any]],
+    items: Sequence[dict[str, Any]],
     max_token_budget: int,
     utility_key: str = "utility",
     token_cost_key: str = "token_cost",
     mandatory_key: str = "mandatory",
     greedy_approximation: bool = False,
-) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Solve 0/1 knapsack context budget optimization maximizing utility (REQ-BM-202).
 
     Preserves mandatory items unconditionally, then solves 0/1 knapsack on remaining budget.
@@ -526,8 +526,8 @@ def allocate_context_budget(
             "algorithm": "greedy_density" if greedy_approximation else "optimal_dp",
         }
 
-    mandatory_items: List[Dict[str, Any]] = []
-    optional_items: List[Dict[str, Any]] = []
+    mandatory_items: list[dict[str, Any]] = []
+    optional_items: list[dict[str, Any]] = []
 
     for it in items:
         if bool(it.get(mandatory_key, False)):
@@ -536,14 +536,14 @@ def allocate_context_budget(
             optional_items.append(it)
 
     mand_cost = sum(int(m.get(token_cost_key, 0)) for m in mandatory_items)
-    mand_util = sum(int(m.get(utility_key, 0)) for m in mandatory_items)
+    sum(int(m.get(utility_key, 0)) for m in mandatory_items)
 
     remaining_budget = max(0, max_token_budget - mand_cost)
-    selected_optional: List[Dict[str, Any]] = []
+    selected_optional: list[dict[str, Any]] = []
 
     if greedy_approximation:
         algorithm = "greedy_density"
-        def _density(x: Dict[str, Any]) -> float:
+        def _density(x: dict[str, Any]) -> float:
             c = max(1, int(x.get(token_cost_key, 1)))
             u = float(x.get(utility_key, 0))
             return u / c
