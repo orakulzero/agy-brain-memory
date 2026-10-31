@@ -733,3 +733,19 @@ class BrainMemoryIndexer:
             )
             conn.commit()
             return inserted_id
+
+def validate_transcript_schema(transcript_path: Path) -> bool:
+    """Validate JSONL transcript schema (requires dict rows with step_index and type)."""
+    if not transcript_path.exists():
+        return False
+    try:
+        with transcript_path.open("r", encoding="utf-8") as fh:
+            for raw_line in fh:
+                if not raw_line.strip():
+                    continue
+                step = json.loads(raw_line)
+                if not isinstance(step, dict) or "step_index" not in step or "type" not in step:
+                    return False
+        return True
+    except (OSError, json.JSONDecodeError):
+        return False
