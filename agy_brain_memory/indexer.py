@@ -356,9 +356,7 @@ class BrainMemoryIndexer:
                                     "",
                                 )
                                 existing_edge = conv_edges_by_child.get(child_id)
-                                if existing_edge is None:
-                                    conv_edges_by_child[child_id] = candidate_edge
-                                elif (
+                                if existing_edge is None or (
                                     existing_edge[3] == "subagent"
                                     and not existing_edge[5]
                                     and (candidate_edge[3] != "subagent" or candidate_edge[5])
@@ -400,7 +398,7 @@ class BrainMemoryIndexer:
                                         c = st.get("description") or st.get("comment") or st.get("body")
                                         if c:
                                             text_parts.append(str(c))
-                            dims_json = json.dumps(sorted(list(dims)))
+                            dims_json = json.dumps(sorted(dims))
                             content_text = " ".join(text_parts)[:MAX_ARTIFACT_CONTENT_CHARS]
                             t_mtime = tour_path.stat().st_mtime_ns
                             tour_id = str(tour_data.get("id") or tour_path.stem)
@@ -676,7 +674,7 @@ class BrainMemoryIndexer:
                     c = st.get("description") or st.get("comment") or st.get("body")
                     if c:
                         text_parts.append(str(c))
-        dims_json = json.dumps(sorted(list(dims)))
+        dims_json = json.dumps(sorted(dims))
         content_text = " ".join(text_parts)[:MAX_ARTIFACT_CONTENT_CHARS]
         now_ns = time.time_ns()
         tour_id = str(tour_data.get("id") or Path(filename).stem)
