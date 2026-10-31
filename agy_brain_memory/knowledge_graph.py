@@ -8,23 +8,24 @@ from __future__ import annotations
 
 import copy
 import re
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from collections.abc import Sequence
+from typing import Any
 
 
 class TemporalEntityGraph:
     """Directed temporal multigraph storing entities and time-bounded assertions."""
 
     def __init__(self) -> None:
-        self.entities: Dict[str, Dict[str, Any]] = {}
-        self.relations: List[Dict[str, Any]] = []
+        self.entities: dict[str, dict[str, Any]] = {}
+        self.relations: list[dict[str, Any]] = []
 
     def add_entity(
         self,
         entity_id: str,
         entity_type: str = "Entity",
-        properties: Optional[Dict[str, Any]] = None,
+        properties: dict[str, Any] | None = None,
         timestamp: float = 0.0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Record or update an entity node in the knowledge graph."""
         node = {
             "entity_id": str(entity_id),
@@ -41,10 +42,10 @@ class TemporalEntityGraph:
         predicate: str,
         object_: str,
         valid_from: float = 0.0,
-        valid_to: Optional[float] = None,
+        valid_to: float | None = None,
         confidence: float = 1.0,
-        provenance: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        provenance: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Record a time-scoped relationship assertion between two entities."""
         sub_str = str(subject)
         obj_str = str(object_)
@@ -69,25 +70,22 @@ class TemporalEntityGraph:
     def query_point_in_time(
         self,
         as_of: float,
-        entity_id: Optional[str] = None,
-        predicate: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        entity_id: str | None = None,
+        predicate: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Retrieve all facts whose valid interval covers `as_of` (valid_from <= as_of < valid_to)."""
         t = float(as_of)
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         for r in self.relations:
-            if r["valid_from"] <= t:
-                if r["valid_to"] is None or t < r["valid_to"]:
-                    if entity_id is not None:
-                        if r["subject"] != entity_id and r["object"] != entity_id:
-                            continue
-                    if predicate is not None:
-                        if r["predicate"] != predicate:
-                            continue
-                    results.append(copy.deepcopy(r))
+            if r["valid_from"] <= t and (r["valid_to"] is None or t < r["valid_to"]):
+                if entity_id is not None and r["subject"] != entity_id and r["object"] != entity_id:
+                    continue
+                if predicate is not None and r["predicate"] != predicate:
+                    continue
+                results.append(copy.deepcopy(r))
         return results
 
-    def query_entity_history(self, entity_id: str) -> List[Dict[str, Any]]:
+    def query_entity_history(self, entity_id: str) -> list[dict[str, Any]]:
         """Retrieve chronological relationship history for an entity sorted by valid_from."""
         eid = str(entity_id)
         matches = [
@@ -98,7 +96,7 @@ class TemporalEntityGraph:
         matches.sort(key=lambda r: (r["valid_from"], str(r.get("valid_to") or "")))
         return matches
 
-    def export_graph_json(self) -> Dict[str, Any]:
+    def export_graph_json(self) -> dict[str, Any]:
         """Export serialized representation of entities and relations."""
         return {
             "entities": copy.deepcopy(self.entities),
@@ -114,7 +112,7 @@ class TemporalEntityGraph:
         def _clean_id(raw: str) -> str:
             return re.sub(r"[^a-zA-Z0-9_]", "_", raw)
 
-        for eid, node in sorted(self.entities.items()):
+        for eid in sorted(self.entities):
             cid = _clean_id(eid)
             lines.append(f'    {cid}["{eid}"]')
 
@@ -129,14 +127,14 @@ class TemporalEntityGraph:
 
 def extract_temporal_knowledge_graph(
     steps_or_db: Any,
-    time_window: Optional[Tuple[float, float]] = None,
+    time_window: tuple[float, float] | None = None,
 ) -> TemporalEntityGraph:
     """Extract a TemporalEntityGraph from session step records or database entries."""
     graph = TemporalEntityGraph()
     if not steps_or_db:
         return graph
 
-    steps: Sequence[Dict[str, Any]] = steps_or_db if isinstance(steps_or_db, (list, tuple)) else []
+    steps: Sequence[dict[str, Any]] = steps_or_db if isinstance(steps_or_db, (list, tuple)) else []
     for step in steps:
         if not isinstance(step, dict):
             continue
