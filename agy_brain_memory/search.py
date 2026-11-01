@@ -9,7 +9,8 @@ import math
 from pathlib import Path
 import re
 import sqlite3
-from typing import Any, Dict, List, Sequence, Union
+from typing import Any
+from collections.abc import Sequence
 
 
 def sanitize_fts5_query(raw_query: str) -> str:
@@ -481,7 +482,7 @@ def analyze_subagent_graph_topology(
         active_edges = raw_edges
 
     adj: dict[str, list[str]] = {n: [] for n in nodes}
-    in_degree: dict[str, int] = {n: 0 for n in nodes}
+    in_degree: dict[str, int] = dict.fromkeys(nodes, 0)
     roles_distribution: dict[str, int] = {}
 
     for parent, child, role, _ in active_edges:
@@ -496,7 +497,7 @@ def analyze_subagent_graph_topology(
     orphan_nodes = sorted([n for n in nodes if in_degree.get(n, 0) == 0])
 
     # Cycle detection via 3-color DFS (0=unvisited, 1=visiting, 2=visited)
-    color: dict[str, int] = {n: 0 for n in nodes}
+    color: dict[str, int] = dict.fromkeys(nodes, 0)
     has_cycles = False
 
     def dfs_cycle(u: str) -> None:
@@ -660,32 +661,32 @@ class HybridBrainRetriever:
         self.semantic_weight = semantic_weight
 
         # Storage for indexed documents
-        self.documents: List[Dict[str, Any]] = []
+        self.documents: list[dict[str, Any]] = []
         self.doc_count: int = 0
         self.avg_doc_len: float = 0.0
 
         # BM25 index data
-        self.doc_tokens: List[List[str]] = []
-        self.doc_lens: List[int] = []
+        self.doc_tokens: list[list[str]] = []
+        self.doc_lens: list[int] = []
         self.token_df: Counter[str] = Counter()
 
         # Semantic N-Gram index data
         self.ngram_df: Counter[str] = Counter()
-        self.doc_ngram_vecs: List[Dict[str, float]] = []
+        self.doc_ngram_vecs: list[dict[str, float]] = []
 
     @staticmethod
-    def _tokenize_words(text: str) -> List[str]:
+    def _tokenize_words(text: str) -> list[str]:
         """Extract word tokens from text."""
         return re.findall(r"\w+", text.lower())
 
     @staticmethod
-    def _extract_char_ngrams(text: str) -> List[str]:
+    def _extract_char_ngrams(text: str) -> list[str]:
         """Extract character 3-grams and 4-grams from text."""
         cleaned = re.sub(r"\s+", " ", text.lower().strip())
         if not cleaned:
             return []
 
-        grams: List[str] = []
+        grams: list[str] = []
         if len(cleaned) >= 3:
             grams.extend(cleaned[i : i + 3] for i in range(len(cleaned) - 2))
         if len(cleaned) >= 4:
@@ -698,7 +699,7 @@ class HybridBrainRetriever:
 
     def index_documents(
         self,
-        documents: Sequence[Union[str, Dict[str, Any]]],
+        documents: Sequence[str | dict[str, Any]],
     ) -> None:
         """Index a collection of documents for hybrid retrieval."""
         self.documents = []
@@ -755,20 +756,17 @@ class HybridBrainRetriever:
         for i in range(self.doc_count):
             ngrams = self._extract_char_ngrams(self.documents[i]["content"])
             counts = Counter(ngrams)
-            vec: Dict[str, float] = {}
+            vec: dict[str, float] = {}
             for gram, cnt in counts.items():
                 df = self.ngram_df[gram]
                 idf = math.log((self.doc_count + 1.0) / (df + 1.0)) + 1.0
                 vec[gram] = float(cnt) * idf
 
             norm = math.sqrt(sum(v * v for v in vec.values()))
-            if norm > 0.0:
-                normalized_vec = {k: v / norm for k, v in vec.items()}
-            else:
-                normalized_vec = {}
+            normalized_vec = {k: v / norm for k, v in vec.items()} if norm > 0.0 else {}
             self.doc_ngram_vecs.append(normalized_vec)
 
-    def _score_bm25(self, query: str) -> List[float]:
+    def _score_bm25(self, query: str) -> list[float]:
         q_tokens = self._tokenize_words(query)
         if not q_tokens or self.doc_count == 0 or self.avg_doc_len == 0.0:
             return [0.0] * self.doc_count
@@ -791,13 +789,13 @@ class HybridBrainRetriever:
 
         return scores
 
-    def _score_semantic(self, query: str) -> List[float]:
+    def _score_semantic(self, query: str) -> list[float]:
         q_ngrams = self._extract_char_ngrams(query)
         if not q_ngrams or self.doc_count == 0:
             return [0.0] * self.doc_count
 
         counts = Counter(q_ngrams)
-        q_vec: Dict[str, float] = {}
+        q_vec: dict[str, float] = {}
         for gram, cnt in counts.items():
             if gram in self.ngram_df:
                 df = self.ngram_df[gram]
@@ -826,7 +824,7 @@ class HybridBrainRetriever:
         self,
         query: str,
         top_k: int = 5,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         if top_k <= 0 or not query.strip() or self.doc_count == 0:
             return []
 
@@ -837,7 +835,7 @@ class HybridBrainRetriever:
             i for i in range(self.doc_count) if bm25_scores[i] > 1e-9
         ]
         bm25_ranked_indices.sort(key=lambda idx: bm25_scores[idx], reverse=True)
-        bm25_ranks: Dict[int, int] = {
+        bm25_ranks: dict[int, int] = {
             idx: rank + 1 for rank, idx in enumerate(bm25_ranked_indices)
         }
 
@@ -845,7 +843,7 @@ class HybridBrainRetriever:
             i for i in range(self.doc_count) if semantic_scores[i] > 1e-9
         ]
         semantic_ranked_indices.sort(key=lambda idx: semantic_scores[idx], reverse=True)
-        semantic_ranks: Dict[int, int] = {
+        semantic_ranks: dict[int, int] = {
             idx: rank + 1 for rank, idx in enumerate(semantic_ranked_indices)
         }
 
@@ -853,7 +851,7 @@ class HybridBrainRetriever:
         if not fused_candidates:
             return []
 
-        scored_results: List[Dict[str, Any]] = []
+        scored_results: list[dict[str, Any]] = []
         for idx in fused_candidates:
             rrf_score = 0.0
             if idx in bm25_ranks:
@@ -882,15 +880,15 @@ class HybridBrainRetriever:
 
 
 def hybrid_search_memory(
-    documents_or_db: Union[Sequence[Union[str, Dict[str, Any]]], Path, str],
+    documents_or_db: Sequence[str | dict[str, Any]] | Path | str,
     query: str,
     top_k: int = 5,
     rrf_k: int = 60,
     bm25_weight: float = 1.0,
     semantic_weight: float = 1.0,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Perform hybrid lexical BM25 and semantic character 3/4-gram TF-IDF search with RRF."""
-    docs: List[Union[str, Dict[str, Any]]] = []
+    docs: list[str | dict[str, Any]] = []
 
     if isinstance(documents_or_db, (str, Path)) and (
         Path(documents_or_db).is_file() or str(documents_or_db).endswith((".sqlite", ".db"))
