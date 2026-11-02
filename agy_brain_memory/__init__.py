@@ -34,10 +34,16 @@ from agy_brain_memory.search import (
     search_capa_records,
     search_diff_tours,
 )
+from agy_brain_memory.smt_state_invariant_guard import (
+    SMTStateInvariantGuard,
+    StateInvariantRule,
+)
 
 __all__ = [
     "BrainMemoryIndexer",
     "HybridBrainRetriever",
+    "SMTStateInvariantGuard",
+    "StateInvariantRule",
     "TemporalEntityGraph",
     "__version__",
     "allocate_context_budget",
@@ -68,18 +74,18 @@ __all__ = [
 
 
 def __getattr__(name: str):
-    if name == 'run_benchmark_suite':
-                return run_benchmark_suite
-    if name == 'main':
+    if name == "run_benchmark_suite":
+        return run_benchmark_suite
+    if name == "main":
         from agy_brain_memory.cli import main
         return main
-    if name == 'run_cli':
+    if name == "run_cli":
         from agy_brain_memory.cli import run_cli
         return run_cli
-    if name == 'handle_mcp_request':
+    if name == "handle_mcp_request":
         from agy_brain_memory.mcp_server import handle_mcp_request
         return handle_mcp_request
-    if name == 'run_stdio_server':
+    if name == "run_stdio_server":
         from agy_brain_memory.mcp_server import run_stdio_server
         return run_stdio_server
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
