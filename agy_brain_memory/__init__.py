@@ -1,8 +1,9 @@
-"""Antigravity Brain SQLite WAL + FTS5 Memory Indexer, Subagent Lineage Graph, and Session Digest Exporter."""
+"""AGY Brain SQLite WAL + FTS5 Memory Indexer, Subagent Lineage Graph, and Session Digest Exporter."""
 
 from __future__ import annotations
 
 __version__ = "2.0.0"
+__v3_generation__ = "3.0.0"
 
 from agy_brain_memory.compactor import (
     allocate_context_budget,
@@ -11,6 +12,10 @@ from agy_brain_memory.compactor import (
     create_brain_checkpoint_delta,
     deduplicate_near_identical_steps,
     export_session_digest,
+)
+from agy_brain_memory.context_token_profiler import (
+    ContextTokenProfiler,
+    profile_session_context,
 )
 from agy_brain_memory.knowledge_graph import (
     TemporalEntityGraph,
@@ -51,6 +56,7 @@ from agy_brain_memory.memory_tier_partitioner import (
 __all__ = [
     "BrainMemoryIndexer",
     "COLD_SCORE_DECAY",
+    "ContextTokenProfiler",
     "DEFAULT_HOT_MAX_AGE_DAYS",
     "DEFAULT_PINNED_ARTIFACTS",
     "HOT_SCORE_BOOST",
@@ -59,6 +65,7 @@ __all__ = [
     "SMTStateInvariantGuard",
     "StateInvariantRule",
     "TemporalEntityGraph",
+    "__v3_generation__",
     "__version__",
     "allocate_context_budget",
     "analyze_brain_health",
@@ -77,6 +84,7 @@ __all__ = [
     "install_brain_memory_plugin",
     "main",
     "partition_brain_memory_tiers",
+    "profile_session_context",
     "run_benchmark_suite",
     "run_cli",
     "run_stdio_server",
