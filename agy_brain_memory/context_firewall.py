@@ -9,7 +9,7 @@ Hygiene: 100% English-only (0 Cyrillic characters).
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 from agy_brain_memory.compactor import allocate_context_budget
 
 
@@ -17,14 +17,14 @@ def evaluate_context_firewall(
     content: str = "",
     content_type: str = "text",
     max_lines: int = 500,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Evaluate context content for subagent isolation or linear folding (REQ-BM-FIREWALL-01)."""
     lines = len(content.splitlines()) if isinstance(content, str) else 0
     is_log = (
         content_type in ("log_dump", "log", "traceback")
         or ("traceback (most recent call last)" in content.lower())
     )
-    criteria: List[str] = []
+    criteria: list[str] = []
     requires_isolation = False
 
     if lines > max_lines:
@@ -77,14 +77,14 @@ class ContextFirewallRouter:
         estimated_lines: int | None = None,
         source_type: str = "general",
         content: str | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         cnt = content or ""
         lines = estimated_lines if estimated_lines is not None else len(cnt.splitlines())
         is_log = (
             source_type in ("log_dump", "log", "traceback")
             or ("traceback (most recent call last)" in cnt.lower())
         )
-        criteria: List[str] = []
+        criteria: list[str] = []
         requires_isolation = False
 
         if lines > self.max_in_process_lines:
@@ -120,12 +120,12 @@ class SubagentContextFirewall:
     def __init__(self, max_lines: int = 500) -> None:
         self.router = ContextFirewallRouter(max_in_process_lines=max_lines)
 
-    def evaluate(self, content: str, content_type: str = "text") -> Dict[str, Any]:
+    def evaluate(self, content: str, content_type: str = "text") -> dict[str, Any]:
         return self.router.evaluate(content=content, source_type=content_type)
 
     def should_isolate(self, content_or_lines: str | int, content_type: str = "text") -> bool:
         return should_isolate_to_subagent(content_or_lines, content_type=content_type, max_lines=self.router.max_in_process_lines)
 
     @staticmethod
-    def allocate_knapsack(candidates: List[Dict[str, Any]], max_token_budget: int) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    def allocate_knapsack(candidates: list[dict[str, Any]], max_token_budget: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         return allocate_context_budget(candidates, max_token_budget=max_token_budget)
