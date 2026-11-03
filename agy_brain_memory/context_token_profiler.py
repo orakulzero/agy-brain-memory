@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
+from collections.abc import Iterable, Mapping
 
 CATEGORIES: tuple[str, ...] = (
     "tool_output",
@@ -57,7 +58,7 @@ def profile_session_context(
     token_budget: int = 120000,
 ) -> dict[str, Any]:
     """REQ-BM-PROFILER-01: Profile token distribution across categories and rank top context hogs."""
-    category_tokens: dict[str, int] = {cat: 0 for cat in CATEGORIES}
+    category_tokens: dict[str, int] = dict.fromkeys(CATEGORIES, 0)
     step_records: list[dict[str, Any]] = []
     total_tokens = 0
     valid_steps = 0
