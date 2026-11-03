@@ -38,10 +38,24 @@ from agy_brain_memory.smt_state_invariant_guard import (
     SMTStateInvariantGuard,
     StateInvariantRule,
 )
+from agy_brain_memory.memory_tier_partitioner import (
+    COLD_SCORE_DECAY,
+    DEFAULT_HOT_MAX_AGE_DAYS,
+    DEFAULT_PINNED_ARTIFACTS,
+    HOT_SCORE_BOOST,
+    MemoryTierPartitioner,
+    partition_brain_memory_tiers,
+    search_tiered_brain,
+)
 
 __all__ = [
     "BrainMemoryIndexer",
+    "COLD_SCORE_DECAY",
+    "DEFAULT_HOT_MAX_AGE_DAYS",
+    "DEFAULT_PINNED_ARTIFACTS",
+    "HOT_SCORE_BOOST",
     "HybridBrainRetriever",
+    "MemoryTierPartitioner",
     "SMTStateInvariantGuard",
     "StateInvariantRule",
     "TemporalEntityGraph",
@@ -62,6 +76,7 @@ __all__ = [
     "hybrid_search_memory",
     "install_brain_memory_plugin",
     "main",
+    "partition_brain_memory_tiers",
     "run_benchmark_suite",
     "run_cli",
     "run_stdio_server",
@@ -69,6 +84,7 @@ __all__ = [
     "search_brain",
     "search_capa_records",
     "search_diff_tours",
+    "search_tiered_brain",
     "validate_brain_memory_plugin",
 ]
 

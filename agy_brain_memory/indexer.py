@@ -35,6 +35,8 @@ def _connect_db(db_path: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
+    conn.execute("PRAGMA mmap_size=268435456;")
+    conn.execute("PRAGMA temp_store=MEMORY;")
     return conn
 
 
